@@ -15,8 +15,6 @@ internal sealed class Tray : ApplicationContext
     private readonly ToolStripMenuItem toggle;
     private readonly Icon activeIcon = Style.MakeIcon(true);
     private readonly Icon pausedIcon = Style.MakeIcon(false);
-    private readonly Bitmap activeMark = Style.Mark(20, true);
-    private readonly Bitmap pausedMark = Style.Mark(20, false);
     private Sample sample;
     private bool active = true;
 
@@ -59,7 +57,7 @@ internal sealed class Tray : ApplicationContext
         icon.Text = AppName + " · " + caption;
         icon.Icon = active ? activeIcon : pausedIcon;
         string action = active ? "Pause" : "Resume";
-        if (sample != null) sample.SetStatus(caption, active ? activeMark : pausedMark, action);
+        if (sample != null) sample.SetStatus(caption, active, action);
     }
 
     private void OpenSample()
@@ -72,11 +70,13 @@ internal sealed class Tray : ApplicationContext
         }
         if (sample.WindowState == FormWindowState.Minimized) sample.WindowState = FormWindowState.Normal;
         if (!sample.Visible) sample.Show();
+        ShowWindow(sample.Handle, 5);
         sample.Activate();
         SetForegroundWindow(sample.Handle);
     }
 
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr window, int command);
 
     protected override void Dispose(bool disposing)
     {
@@ -87,8 +87,6 @@ internal sealed class Tray : ApplicationContext
             menu.Dispose();
             activeIcon.Dispose();
             pausedIcon.Dispose();
-            activeMark.Dispose();
-            pausedMark.Dispose();
             wheel.Dispose();
         }
         base.Dispose(disposing);
@@ -97,62 +95,133 @@ internal sealed class Tray : ApplicationContext
 
 internal sealed class Sample : Form
 {
-    private readonly Label status;
-    private readonly PictureBox mark;
-    private readonly Button toggle;
+    private readonly Label heading = new Label { Text = "Try the scroll gesture", AutoSize = true };
+    private readonly Label instruction = new Label
+    {
+        Text = "Point at a number below and roll the wheel.", AutoSize = true, ForeColor = Style.Secondary
+    };
+    private readonly Panel editorCard = new Panel
+    {
+        BackColor = SystemColors.Window, BorderStyle = BorderStyle.FixedSingle
+    };
+    private readonly TextBox example = new TextBox
+    {
+        AccessibleName = "Test text", BorderStyle = BorderStyle.None, BackColor = SystemColors.Window,
+        ForeColor = Style.Text, Text = "Exposure -0.25 EV  /  Frame 120"
+    };
+    private readonly Panel divider = new Panel { BackColor = Style.Border };
+    private readonly Label status = new Label { AutoSize = true, ForeColor = Style.Secondary };
+    private readonly Button toggle = new Button { FlatStyle = FlatStyle.Flat, Text = "Pause" };
+    private Font bodyFont, headingFont, editorFont;
 
     internal Sample(Icon icon, Action toggleAction)
     {
         Text = Tray.AppName;
         Icon = icon;
-        StartPosition = FormStartPosition.CenterScreen;
-        AutoScaleDimensions = new SizeF(96, 96);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(430, 259);
+        StartPosition = FormStartPosition.Manual;
+        AutoScaleMode = AutoScaleMode.None;
         BackColor = Style.Surface;
         ForeColor = Style.Text;
-        Font = new Font(Tray.FontName, 10);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = false;
         MaximizeBox = false;
         KeyPreview = true;
         KeyDown += (sender, args) => { if (args.KeyCode == Keys.Escape) Close(); };
 
-        var header = new Label
-        {
-            Text = Tray.AppName, AutoSize = true, Location = new Point(25, 23),
-            Font = new Font(Font.FontFamily, 20, FontStyle.Bold)
-        };
-        mark = new PictureBox { Bounds = new Rectangle(27, 69, 20, 20), SizeMode = PictureBoxSizeMode.Zoom };
-        status = new Label { AutoSize = true, Location = new Point(52, 68), ForeColor = Style.Secondary };
-        var instruction = new Label
-        {
-            Text = "Hover over a number and scroll up or down.",
-            AutoSize = true, Location = new Point(26, 112)
-        };
-        var example = new TextBox
-        {
-            AccessibleName = "Test text", Location = new Point(26, 144), Width = 378,
-            Font = new Font(Tray.FontName, 15), ForeColor = Style.Text,
-            Text = "Exposure -0.25 EV, frame 120"
-        };
-        toggle = new Button
-        {
-            AutoSize = true, Location = new Point(26, 201), Padding = new Padding(10, 4, 10, 4),
-            FlatStyle = FlatStyle.Flat, BackColor = Style.Highlight, ForeColor = Style.Text
-        };
         toggle.FlatAppearance.BorderColor = Style.Border;
+        toggle.FlatAppearance.MouseOverBackColor = Style.Highlight;
+        toggle.BackColor = SystemColors.Window;
         toggle.Click += (sender, args) => { toggleAction(); example.Focus(); };
-        Controls.AddRange(new Control[] { header, mark, status, instruction, example, toggle });
+        editorCard.Controls.Add(example);
+        Controls.AddRange(new Control[] { heading, instruction, editorCard, divider, status, toggle });
         ActiveControl = example;
         Shown += (sender, args) => example.Select(0, 0);
     }
 
-    internal void SetStatus(string caption, Bitmap image, string action)
+    protected override void OnLoad(EventArgs args)
+    {
+        var workArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+        Location = workArea.Location;
+        LayoutForDpi((int)GetDpiForWindow(Handle));
+        Location = new Point(workArea.Left + (workArea.Width - Width) / 2,
+            workArea.Top + (workArea.Height - Height) / 2);
+        base.OnLoad(args);
+    }
+
+    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr window);
+
+    protected override void WndProc(ref Message message)
+    {
+        const int dpiChanged = 0x02E0;
+        if (message.Msg == dpiChanged && bodyFont != null)
+        {
+            var suggested = (NativeRect)Marshal.PtrToStructure(message.LParam, typeof(NativeRect));
+            Location = new Point(suggested.Left, suggested.Top);
+            LayoutForDpi((int)(message.WParam.ToInt64() & 0xffff));
+            return;
+        }
+        base.WndProc(ref message);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        internal int Left, Top, Right, Bottom;
+    }
+
+    private void LayoutForDpi(int dpi)
+    {
+        SuspendLayout();
+        var oldBody = bodyFont;
+        var oldHeading = headingFont;
+        var oldEditor = editorFont;
+        float scale = dpi / 96f;
+        Func<int, int> px = value => (int)Math.Round(value * scale);
+        bodyFont = new Font(Tray.FontName, 14 * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+        headingFont = new Font(Tray.FontName, 25 * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+        editorFont = new Font(Tray.FontName, 19 * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+        Font = bodyFont;
+        heading.Font = headingFont;
+        example.Font = editorFont;
+
+        int left = px(26);
+        int content = Math.Max(px(352), Math.Max(instruction.PreferredWidth,
+            TextRenderer.MeasureText(example.Text, editorFont).Width + px(32)));
+        int y = px(22);
+        heading.Location = new Point(left, y);
+        y += heading.PreferredHeight + px(5);
+        instruction.Location = new Point(left, y);
+        y += instruction.PreferredHeight + px(18);
+        editorCard.SetBounds(left, y, content, px(48));
+        example.SetBounds(px(13), (editorCard.ClientSize.Height - example.PreferredHeight) / 2,
+            editorCard.ClientSize.Width - px(26), example.PreferredHeight);
+        y += editorCard.Height + px(19);
+        divider.SetBounds(left, y, content, px(1));
+        y += px(13);
+        toggle.SetBounds(left + content - px(88), y, px(88), px(32));
+        status.Location = new Point(left, y + (toggle.Height - status.PreferredHeight) / 2);
+        ClientSize = new Size(content + left * 2, toggle.Bottom + px(18));
+        ResumeLayout(false);
+        if (oldBody != null) oldBody.Dispose();
+        if (oldHeading != null) oldHeading.Dispose();
+        if (oldEditor != null) oldEditor.Dispose();
+    }
+
+    internal void SetStatus(string caption, bool active, string action)
     {
         status.Text = caption;
-        mark.Image = image;
+        status.ForeColor = active && !SystemInformation.HighContrast
+            ? Color.FromArgb(26, 101, 73) : Style.Secondary;
         toggle.Text = action;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (!disposing) return;
+        if (bodyFont != null) bodyFont.Dispose();
+        if (headingFont != null) headingFont.Dispose();
+        if (editorFont != null) editorFont.Dispose();
     }
 }
 
