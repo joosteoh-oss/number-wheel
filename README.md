@@ -1,4 +1,4 @@
-# Number Wheel · 数字滚轮
+# Number Wheel
 
 Scroll over a number in the active text field to adjust it. No middle-click, modifier key, or text selection is needed.
 
@@ -23,12 +23,6 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 The output is `dist\NumberWheel.exe`. The probes in `tests` can be built with `-Target NativeTest` and `-Target BrowserTest`. Run them on the interactive desktop with Number Wheel running. For the browser probe, open `tests/fixture.html` in Chrome and focus its input field. Both probes temporarily move the mouse pointer and send wheel input to their fixture.
-
-## 中文
-
-在 [Releases](../../releases) 下载并运行 `NumberWheel.exe`。左键点击托盘图标可打开试用窗口，右键可暂停、恢复或退出。
-
-点击输入框，再把鼠标指针放到数字上直接滚动。整数每格增减 1，小数按末位增减。指向文字或空白时，滚轮照常工作。已验证 Windows Forms 输入框和 Chrome 网页文本框。部分自绘控件和管理员权限窗口可能无法使用。
 
 ## License
 

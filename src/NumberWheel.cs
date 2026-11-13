@@ -252,7 +252,7 @@ internal sealed class Editor
         return error is ElementNotAvailableException || error is COMException
             || error is InvalidOperationException || error is ArgumentException
             || error is TimeoutException || error is UnauthorizedAccessException
-            || error is NotSupportedException;
+            || error is NotSupportedException || error is NullReferenceException;
     }
 
     internal static Editor AtPoint(Native.Pt cursor, IntPtr window, IntPtr foreground)
@@ -268,12 +268,15 @@ internal sealed class Editor
             || !current.BoundingRectangle.Contains(point)) return null;
         object provider;
         if (!element.TryGetCurrentPattern(TextPattern.Pattern, out provider)) return null;
-        var pattern = (TextPattern)provider;
-        if (pattern.SupportedTextSelection == SupportedTextSelection.None) return null;
+        var pattern = provider as TextPattern;
+        if (pattern == null || pattern.SupportedTextSelection == SupportedTextSelection.None) return null;
 
+        // Providers can return no range for padding or a disappearing text element.
         var at = pattern.RangeFromPoint(point);
+        if (at == null) return null;
         var left = at.Clone();
         var right = at.Clone();
+        if (left == null || right == null) return null;
         int leftUnits = -left.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, -96);
         right.MoveEndpointByUnit(TextPatternRangeEndpoint.End, TextUnit.Character, 96);
         string before = left.GetText(512);
@@ -287,6 +290,7 @@ internal sealed class Editor
             if ((match.Index == 0 && leftUnits == 96) ||
                 (match.Index + match.Length == fragment.Length && after.Length >= 96)) continue;
             var token = at.Clone();
+            if (token == null) return null;
             if (start < 0)
                 token.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, start);
             if (end > 0)
@@ -295,8 +299,9 @@ internal sealed class Editor
                 token.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, start);
             if (end < 0)
                 token.MoveEndpointByUnit(TextPatternRangeEndpoint.End, TextUnit.Character, end);
-            if (token.GetText(match.Length + 1) != match.Value
-                || !Array.Exists(token.GetBoundingRectangles(), rect => rect.Contains(point))
+            if (token.GetText(match.Length + 1) != match.Value) continue;
+            var bounds = token.GetBoundingRectangles();
+            if (bounds == null || !Array.Exists(bounds, rect => rect.Contains(point))
                 || Numbers.Adjust(match.Value, 0) == null) continue;
 
             object readOnly = token.GetAttributeValue(TextPattern.IsReadOnlyAttribute);
@@ -304,8 +309,9 @@ internal sealed class Editor
             {
                 object value;
                 if (object.Equals(readOnly, true)
-                    || !element.TryGetCurrentPattern(ValuePattern.Pattern, out value)
-                    || ((ValuePattern)value).Current.IsReadOnly) return null;
+                    || !element.TryGetCurrentPattern(ValuePattern.Pattern, out value)) return null;
+                var valuePattern = value as ValuePattern;
+                if (valuePattern == null || valuePattern.Current.IsReadOnly) return null;
             }
             return new Editor(element, pattern, token, foreground, match.Value);
         }
@@ -326,7 +332,7 @@ internal sealed class Editor
             if (!stillAtTarget() || !element.Equals(AutomationElement.FocusedElement)
                 || Native.ModifierDown()) return;
             var selected = pattern.GetSelection();
-            if (selected.Length == 1 && selected[0].Compare(range)
+            if (SingleRange(selected) && selected[0].Compare(range)
                 && selected[0].GetText(Text.Length + 1) == Text)
             {
                 if (Native.GetForegroundWindow() == foreground && Native.Type(replacement)) return;
@@ -335,8 +341,13 @@ internal sealed class Editor
             Thread.Sleep(10);
         }
         var current = pattern.GetSelection();
-        if (original.Length == 1 && current.Length == 1 && current[0].Compare(range)
+        if (SingleRange(original) && SingleRange(current) && current[0].Compare(range)
             && stillAtTarget() && element.Equals(AutomationElement.FocusedElement)) original[0].Select();
+    }
+
+    private static bool SingleRange(TextPatternRange[] ranges)
+    {
+        return ranges != null && ranges.Length == 1 && ranges[0] != null;
     }
 }
 

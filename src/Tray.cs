@@ -1,20 +1,17 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 internal sealed class Tray : ApplicationContext
 {
-    private static readonly bool Chinese = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "zh";
-    internal static string AppName { get { return T("数字滚轮", "Number Wheel"); } }
-    internal static string T(string chinese, string english) { return Chinese ? chinese : english; }
+    internal const string AppName = "Number Wheel";
+    internal const string FontName = "Segoe UI";
 
     private readonly Wheel wheel = new Wheel();
     private readonly NotifyIcon icon;
     private readonly ContextMenuStrip menu;
-    private readonly ToolStripMenuItem status;
     private readonly ToolStripMenuItem toggle;
     private readonly Icon activeIcon = Style.MakeIcon(true);
     private readonly Icon pausedIcon = Style.MakeIcon(false);
@@ -27,21 +24,15 @@ internal sealed class Tray : ApplicationContext
     {
         menu = new ContextMenuStrip
         {
-            ShowImageMargin = false, Padding = new Padding(5),
-            ForeColor = Style.Text, Font = new Font("Segoe UI", 10),
+            ShowImageMargin = false, ShowCheckMargin = true, Padding = new Padding(4),
+            ForeColor = Style.Text, Font = new Font(FontName, 9),
             Renderer = new ToolStripProfessionalRenderer(new MenuColors()) { RoundedEdges = false }
         };
-        status = new ToolStripMenuItem { Enabled = false };
-        var heading = new ToolStripMenuItem(AppName)
-        {
-            Enabled = false, Font = new Font(menu.Font, FontStyle.Bold)
-        };
-        toggle = Item("", Toggle);
+        toggle = Item("Enabled", Toggle);
         menu.Items.AddRange(new ToolStripItem[]
         {
-            heading, status, new ToolStripSeparator(),
-            toggle, Item(T("打开试用窗口", "Open test window"), OpenSample),
-            new ToolStripSeparator(), Item(T("退出", "Quit"), ExitThread)
+            Item("Open test window", OpenSample), toggle,
+            new ToolStripSeparator(), Item("Quit", ExitThread)
         });
         icon = new NotifyIcon { ContextMenuStrip = menu };
         icon.MouseClick += (sender, args) => { if (args.Button == MouseButtons.Left) OpenSample(); };
@@ -51,7 +42,7 @@ internal sealed class Tray : ApplicationContext
 
     private static ToolStripMenuItem Item(string label, Action action)
     {
-        return new ToolStripMenuItem(label, null, (sender, args) => action()) { Padding = new Padding(8, 5, 12, 5) };
+        return new ToolStripMenuItem(label, null, (sender, args) => action()) { Padding = new Padding(2, 4, 12, 4) };
     }
 
     private void Toggle()
@@ -63,12 +54,12 @@ internal sealed class Tray : ApplicationContext
 
     private void RefreshStatus()
     {
-        string caption = active ? T("全局已启用", "Active across apps") : T("已暂停", "Paused");
-        status.Text = caption;
-        toggle.Text = active ? T("暂停数字滚轮", "Pause Number Wheel") : T("启用数字滚轮", "Resume Number Wheel");
+        string caption = active ? "Active across apps" : "Paused";
+        toggle.Checked = active;
         icon.Text = AppName + " · " + caption;
         icon.Icon = active ? activeIcon : pausedIcon;
-        if (sample != null) sample.SetStatus(caption, active ? activeMark : pausedMark, toggle.Text);
+        string action = active ? "Pause" : "Resume";
+        if (sample != null) sample.SetStatus(caption, active ? activeMark : pausedMark, action);
     }
 
     private void OpenSample()
@@ -78,10 +69,14 @@ internal sealed class Tray : ApplicationContext
             sample = new Sample(activeIcon, Toggle);
             sample.FormClosed += (sender, args) => sample = null;
             RefreshStatus();
-            sample.Show();
         }
+        if (sample.WindowState == FormWindowState.Minimized) sample.WindowState = FormWindowState.Normal;
+        if (!sample.Visible) sample.Show();
         sample.Activate();
+        SetForegroundWindow(sample.Handle);
     }
+
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
 
     protected override void Dispose(bool disposing)
     {
@@ -116,7 +111,7 @@ internal sealed class Sample : Form
         ClientSize = new Size(430, 259);
         BackColor = Style.Surface;
         ForeColor = Style.Text;
-        Font = new Font("Segoe UI", 10);
+        Font = new Font(Tray.FontName, 10);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = false;
         MaximizeBox = false;
@@ -132,14 +127,14 @@ internal sealed class Sample : Form
         status = new Label { AutoSize = true, Location = new Point(52, 68), ForeColor = Style.Secondary };
         var instruction = new Label
         {
-            Text = Tray.T("把鼠标指针放在数字上，直接上下滚动。", "Hover over a number and scroll up or down."),
+            Text = "Hover over a number and scroll up or down.",
             AutoSize = true, Location = new Point(26, 112)
         };
         var example = new TextBox
         {
-            AccessibleName = Tray.T("试用文本", "Test text"), Location = new Point(26, 144), Width = 378,
-            Font = new Font(Font.FontFamily, 15), ForeColor = Style.Text,
-            Text = Tray.T("曝光 -0.25 EV，帧数 120", "Exposure -0.25 EV, frame 120")
+            AccessibleName = "Test text", Location = new Point(26, 144), Width = 378,
+            Font = new Font(Tray.FontName, 15), ForeColor = Style.Text,
+            Text = "Exposure -0.25 EV, frame 120"
         };
         toggle = new Button
         {
@@ -186,15 +181,23 @@ internal static class Style
         var image = new Bitmap(size, size);
         using (var graphics = Graphics.FromImage(image))
         using (var background = new SolidBrush(active ? Color.FromArgb(79, 67, 204) : Color.FromArgb(88, 97, 115)))
-        using (var line = new Pen(Color.White, 2.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+        using (var line = new Pen(Color.White, 3.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
         {
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             graphics.ScaleTransform(size / 32f, size / 32f);
-            graphics.FillEllipse(background, 1, 1, 30, 30);
+            using (var tile = new GraphicsPath())
+            {
+                tile.AddArc(1, 1, 14, 14, 180, 90);
+                tile.AddArc(17, 1, 14, 14, 270, 90);
+                tile.AddArc(17, 17, 14, 14, 0, 90);
+                tile.AddArc(1, 17, 14, 14, 90, 90);
+                tile.CloseFigure();
+                graphics.FillPath(background, tile);
+            }
             if (active)
             {
-                graphics.DrawLines(line, new[] { new Point(10, 13), new Point(16, 8), new Point(22, 13) });
-                graphics.DrawLines(line, new[] { new Point(10, 19), new Point(16, 24), new Point(22, 19) });
+                graphics.DrawLines(line, new[] { new Point(9, 13), new Point(16, 7), new Point(23, 13) });
+                graphics.DrawLines(line, new[] { new Point(9, 19), new Point(16, 25), new Point(23, 19) });
             }
             else
             {
@@ -214,4 +217,7 @@ internal sealed class MenuColors : ProfessionalColorTable
     public override Color MenuItemSelected { get { return Style.Highlight; } }
     public override Color SeparatorDark { get { return Style.Border; } }
     public override Color SeparatorLight { get { return Style.Surface; } }
+    public override Color ImageMarginGradientBegin { get { return Style.Surface; } }
+    public override Color ImageMarginGradientMiddle { get { return Style.Surface; } }
+    public override Color ImageMarginGradientEnd { get { return Style.Surface; } }
 }
